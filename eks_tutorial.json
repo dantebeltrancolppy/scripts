@@ -1,0 +1,101 @@
+{
+  "title": "Guía de Configuración AWS EKS Multi-Cuenta (Colppy)",
+  "description": "Pasos para instalar herramientas, configurar AWS SSO para Prod/Stg/Test y habilitar acceso a clusters EKS solucionando problemas de perfiles.",
+  "author": "DevOps Team & Gemini",
+  "version": "1.0",
+  "prerequisites": {
+    "os": "Linux (Ubuntu/Debian)",
+    "role": "DevOpsObserver",
+    "sso_start_url": "https://d-90678de3ed.awsapps.com/start",
+    "region": "us-east-1"
+  },
+  "accounts": [
+    {
+      "env": "Production",
+      "profile": "colppy-prod",
+      "account_id": "185428918146",
+      "cluster_name": "PROD-N-EKS-cluster"
+    },
+    {
+      "env": "Staging",
+      "profile": "colppy-staging",
+      "account_id": "599636274800",
+      "cluster_name": "STG-N-EKS-cluster"
+    },
+    {
+      "env": "Testing",
+      "profile": "colppy-test",
+      "account_id": "828685354428",
+      "cluster_name": "TEST-N-EKS-cluster"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "name": "Instalación de Herramientas",
+      "commands": [
+        "cd /tmp",
+        "# Instalar AWS CLI v2",
+        "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"",
+        "unzip awscliv2.zip",
+        "sudo ./aws/install",
+        "# Instalar Kubectl",
+        "curl -LO \"https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\"",
+        "sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl"
+      ]
+    },
+    {
+      "step_id": 2,
+      "name": "Configuración de Perfiles AWS (Manual)",
+      "description": "Configuración directa de ~/.aws/config para evitar errores con el asistente interactivo.",
+      "action": "Editar el archivo ~/.aws/config y reemplazar su contenido con el siguiente bloque:",
+      "config_content": "[sso-session colppy-session]\nsso_start_url = https://d-90678de3ed.awsapps.com/start\nsso_region = us-east-1\nsso_registration_scopes = sso:account:access\n\n[profile colppy-prod]\nsso_session = colppy-session\nsso_account_id = 185428918146\nsso_role_name = DevOpsObserver\nregion = us-east-1\noutput = json\n\n[profile colppy-staging]\nsso_session = colppy-session\nsso_account_id = 599636274800\nsso_role_name = DevOpsObserver\nregion = us-east-1\noutput = json\n\n[profile colppy-test]\nsso_session = colppy-session\nsso_account_id = 828685354428\nsso_role_name = DevOpsObserver\nregion = us-east-1\noutput = json"
+    },
+    {
+      "step_id": 3,
+      "name": "Iniciar Sesión SSO",
+      "command": "aws sso login --profile colppy-prod",
+      "note": "Esto autentica todos los perfiles simultáneamente ya que comparten la misma sso-session."
+    },
+    {
+      "step_id": 4,
+      "name": "Generar Kubeconfig Base",
+      "description": "Descargar las credenciales del cluster para cada entorno.",
+      "commands": [
+        "aws eks update-kubeconfig --region us-east-1 --name PROD-N-EKS-cluster --profile colppy-prod",
+        "aws eks update-kubeconfig --region us-east-1 --name STG-N-EKS-cluster --profile colppy-staging",
+        "aws eks update-kubeconfig --region us-east-1 --name TEST-N-EKS-cluster --profile colppy-test"
+      ]
+    },
+    {
+      "step_id": 5,
+      "name": "Parchear Kubeconfig (Critical Fix)",
+      "description": "Kubectl no detecta el perfil automáticamente. Se debe editar ~/.kube/config manualmente para cada usuario.",
+      "action": "Para CADA usuario en la sección 'users', agregar '--profile' y el nombre del perfil en la lista 'args'.",
+      "example_patch": {
+        "file": "~/.kube/config",
+        "section": "users -> user -> exec -> args",
+        "change": "Agregar al final de la lista args:",
+        "code_snippet": "        - --cluster-name\n        - PROD-N-EKS-cluster\n        - --profile         <-- AGREGAR ESTO\n        - colppy-prod       <-- Y ESTO"
+      }
+    },
+    {
+      "step_id": 6,
+      "name": "Crear Alias Cortos (Context Rename)",
+      "description": "Renombrar los ARNs largos a nombres cortos para fácil acceso.",
+      "commands": [
+        "kubectl config rename-context arn:aws:eks:us-east-1:185428918146:cluster/PROD-N-EKS-cluster prod",
+        "kubectl config rename-context arn:aws:eks:us-east-1:599636274800:cluster/STG-N-EKS-cluster stg",
+        "kubectl config rename-context arn:aws:eks:us-east-1:828685354428:cluster/TEST-N-EKS-cluster test"
+      ]
+    }
+  ],
+  "usage_guide": {
+    "switch_context": {
+      "prod": "kubectl config use-context prod",
+      "staging": "kubectl config use-context stg",
+      "test": "kubectl config use-context test"
+    },
+    "verify_connection": "kubectl get nodes"
+  }
+}
